@@ -1,0 +1,23 @@
+{
+  "name": "isl-nmf-mvp",
+  "version": "1.0.0",
+  "description": "Indian Sign Language Non-Manual Feature Detection MVP",
+  "main": "web/index.html",
+  "scripts": {
+    "start": "cd web && python3 -m http.server 8000",
+    "serve": "npx http-server web -p 8000 -o",
+    "train": "cd train && python train_classifier.py"
+  },
+  "keywords": [
+    "sign-language",
+    "ISL",
+    "mediapipe",
+    "computer-vision",
+    "accessibility"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}

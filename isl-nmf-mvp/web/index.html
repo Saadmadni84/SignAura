@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ISL NMF MVP</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="log">
+    <div class="tag">Detected NMF → Text</div>
+    <div id="nmfText">—</div>
+    <hr>
+    <div><strong>Live features</strong><pre id="features"></pre></div>
+  </div>
+
+  <!-- MediaPipe scripts (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="app.js"></script>
+</body>
+</html>

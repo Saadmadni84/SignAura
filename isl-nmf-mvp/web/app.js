@@ -6,18 +6,67 @@ const ctx = overlay.getContext('2d');
 const nmfText = document.getElementById('nmfText');
 const featuresPre = document.getElementById('features');
 
-// start webcam
+// start webcam with error handling
 async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-  video.srcObject = stream;
-  await video.play();
-  overlay.width = video.videoWidth || 640;
-  overlay.height = video.videoHeight || 480;
+  try {
+    console.log('Requesting camera access...');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    overlay.width = video.videoWidth || 640;
+    overlay.height = video.videoHeight || 480;
+    console.log('Camera started successfully:', overlay.width, 'x', overlay.height);
+  } catch (err) {
+    console.error('Camera error:', err);
+    nmfText.innerText = 'Camera Error: ' + err.message + '. Please allow camera access and use HTTPS or localhost.';
+  }
 }
 startCamera();
 
 // helper: distance between points
 function dist(a,b) { return Math.hypot(a.x-b.x, a.y-b.y); }
+
+// Temporal smoothing: rolling window for feature history
+const featureHistory = [];
+const SMOOTHING_WINDOW = 5; // average over last 5 frames
+
+function smoothFeatures(rawFeatures) {
+  if (!rawFeatures) return null;
+  
+  featureHistory.push(rawFeatures);
+  if (featureHistory.length > SMOOTHING_WINDOW) {
+    featureHistory.shift();
+  }
+  
+  // Average numeric features
+  const avgFeatures = {
+    eyeRatio: 0,
+    browRatio: 0,
+    mouthOpen: 0,
+    roll: 0,
+    nod: 0,
+    torsoLean: 0
+  };
+  
+  featureHistory.forEach(f => {
+    avgFeatures.eyeRatio += f.eyeRatio;
+    avgFeatures.browRatio += f.browRatio;
+    avgFeatures.mouthOpen += f.mouthOpen;
+    avgFeatures.roll += f.roll;
+    avgFeatures.nod += f.nod;
+    avgFeatures.torsoLean += f.torsoLean;
+  });
+  
+  const count = featureHistory.length;
+  avgFeatures.eyeRatio /= count;
+  avgFeatures.browRatio /= count;
+  avgFeatures.mouthOpen /= count;
+  avgFeatures.roll /= count;
+  avgFeatures.nod /= count;
+  avgFeatures.torsoLean /= count;
+  
+  return avgFeatures;
+}
 
 // feature extractor: takes faceLandmarks (468) and poseLandmarks
 function extractFeatures(faceLandmarks, poseLandmarks) {
@@ -73,17 +122,79 @@ function extractFeatures(faceLandmarks, poseLandmarks) {
 }
 
 // Simple rule-based mapper: convert features into short text
+// Uses hysteresis thresholds to prevent flicker
+const detectionState = {
+  eyesClosed: false,
+  mouthOpen: false,
+  browsRaised: false,
+  headTiltRight: false,
+  headTiltLeft: false,
+  headNod: false,
+  bodyLean: false
+};
+
 function mapToText(f) {
   if (!f) return "";
   const texts = [];
 
-  if (f.eyeRatio < 0.02) texts.push("eyes closed/blink");
-  if (f.mouthOpen > 0.08) texts.push("mouth open (maybe surprise/talking)");
-  if (f.browRatio > 0.06) texts.push("eyebrows raised (surprise/ask)");
-  if (f.roll > 10) texts.push("head tilted right");
-  if (f.roll < -10) texts.push("head tilted left");
-  if (f.nod < -0.02) texts.push("head down / nod");
-  if (Math.abs(f.torsoLean) > 0.05) texts.push("body leaning");
+  // Hysteresis: different thresholds for on/off transitions
+  // Eyes closed/blink
+  if (!detectionState.eyesClosed && f.eyeRatio < 0.02) {
+    detectionState.eyesClosed = true;
+  } else if (detectionState.eyesClosed && f.eyeRatio > 0.03) {
+    detectionState.eyesClosed = false;
+  }
+  if (detectionState.eyesClosed) texts.push("eyes closed/blink");
+
+  // Mouth open
+  if (!detectionState.mouthOpen && f.mouthOpen > 0.08) {
+    detectionState.mouthOpen = true;
+  } else if (detectionState.mouthOpen && f.mouthOpen < 0.06) {
+    detectionState.mouthOpen = false;
+  }
+  if (detectionState.mouthOpen) texts.push("mouth open (maybe surprise/talking)");
+
+  // Eyebrows raised
+  if (!detectionState.browsRaised && f.browRatio > 0.06) {
+    detectionState.browsRaised = true;
+  } else if (detectionState.browsRaised && f.browRatio < 0.05) {
+    detectionState.browsRaised = false;
+  }
+  if (detectionState.browsRaised) texts.push("eyebrows raised (surprise/ask)");
+
+  // Head tilt right
+  if (!detectionState.headTiltRight && f.roll > 10) {
+    detectionState.headTiltRight = true;
+    detectionState.headTiltLeft = false;
+  } else if (detectionState.headTiltRight && f.roll < 8) {
+    detectionState.headTiltRight = false;
+  }
+  if (detectionState.headTiltRight) texts.push("head tilted right");
+
+  // Head tilt left
+  if (!detectionState.headTiltLeft && f.roll < -10) {
+    detectionState.headTiltLeft = true;
+    detectionState.headTiltRight = false;
+  } else if (detectionState.headTiltLeft && f.roll > -8) {
+    detectionState.headTiltLeft = false;
+  }
+  if (detectionState.headTiltLeft) texts.push("head tilted left");
+
+  // Head nod
+  if (!detectionState.headNod && f.nod < -0.02) {
+    detectionState.headNod = true;
+  } else if (detectionState.headNod && f.nod > -0.01) {
+    detectionState.headNod = false;
+  }
+  if (detectionState.headNod) texts.push("head down / nod");
+
+  // Body lean
+  if (!detectionState.bodyLean && Math.abs(f.torsoLean) > 0.05) {
+    detectionState.bodyLean = true;
+  } else if (detectionState.bodyLean && Math.abs(f.torsoLean) < 0.03) {
+    detectionState.bodyLean = false;
+  }
+  if (detectionState.bodyLean) texts.push("body leaning");
 
   return texts.length? texts.join(", ") : "neutral";
 }
@@ -113,31 +224,48 @@ function drawResults(faceLandmarks, poseLandmarks, features) {
 }
 
 // Setup MediaPipe face_mesh and pose
+console.log('Initializing MediaPipe...');
+console.log('FaceMesh available:', typeof FaceMesh !== 'undefined');
+console.log('Pose available:', typeof Pose !== 'undefined');
+
 const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
 faceMesh.setOptions({maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
 const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
 pose.setOptions({modelComplexity:0, minDetectionConfidence:0.5});
 
+console.log('MediaPipe models initialized');
+
 // run both and combine results
 let lastFace = null, lastPose = null;
 faceMesh.onResults((res) => {
   lastFace = res.multiFaceLandmarks && res.multiFaceLandmarks[0] ? res.multiFaceLandmarks[0] : null;
-  const f = extractFeatures(lastFace, lastPose);
-  drawResults(lastFace, lastPose, f);
+  const rawFeatures = extractFeatures(lastFace, lastPose);
+  const smoothedFeatures = smoothFeatures(rawFeatures);
+  drawResults(lastFace, lastPose, smoothedFeatures);
 });
 pose.onResults((res) => {
   lastPose = res.poseLandmarks || null;
-  const f = extractFeatures(lastFace, lastPose);
-  drawResults(lastFace, lastPose, f);
+  const rawFeatures = extractFeatures(lastFace, lastPose);
+  const smoothedFeatures = smoothFeatures(rawFeatures);
+  drawResults(lastFace, lastPose, smoothedFeatures);
 });
 
 // feed video into both
 async function loop() {
-  await faceMesh.send({image: video});
-  await pose.send({image: video});
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    await faceMesh.send({image: video});
+    await pose.send({image: video});
+  }
   requestAnimationFrame(loop);
 }
-video.addEventListener('playing', () => { loop().catch(console.error); });
+
+video.addEventListener('playing', () => { 
+  console.log('Video playing, starting detection loop...');
+  loop().catch(err => {
+    console.error('Loop error:', err);
+    nmfText.innerText = 'Detection Error: ' + err.message;
+  });
+});
 
 // startMediaPipe camera warmup after video plays
 // Notes:

@@ -6,15 +6,29 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="controls">
+    <button id="exportBtn" onclick="exportTranscript()">📥 Export Transcript</button>
+    <button id="clearBtn" onclick="clearTranscript()">🗑️ Clear</button>
+    <button id="bigFontBtn" onclick="toggleBigFont()">🔍 Big Font</button>
+    <button id="saveDataBtn" onclick="saveDataset()">💾 Save Sample</button>
+    <button id="downloadDataBtn" onclick="downloadDataset()">📊 Download Dataset</button>
+    <label for="labelInput">Label:</label>
+    <input type="text" id="labelInput" placeholder="e.g. question, neutral" style="width:120px;">
+  </div>
+  
   <div id="container">
     <video id="video" autoplay playsinline></video>
     <canvas id="overlay"></canvas>
   </div>
+  
   <div id="log">
     <div class="tag">Detected NMF → Text</div>
     <div id="nmfText">—</div>
     <hr>
     <div><strong>Live features</strong><pre id="features"></pre></div>
+    <hr>
+    <div><strong>Transcript History</strong></div>
+    <div id="transcriptLog"></div>
   </div>
 
   <!-- MediaPipe scripts (CDN) -->

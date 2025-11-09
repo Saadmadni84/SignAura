@@ -99,7 +99,13 @@ function extractFeatures(faceLandmarks, poseLandmarks) {
   const eyeRatio = eyeOpenness / interOcular;
 
   // eyebrow distance to eye (raise detection)
-  const browEyeDist = (dist(leftBrow,leftEyeTop) + dist(rightBrow,rightEyeTop))/2;
+  // Use vertical distance from eye center to brow for more stable raise detection
+  const leftEyeCenterY = (leftEyeTop.y + leftEyeBottom.y) / 2;
+  const rightEyeCenterY = (rightEyeTop.y + rightEyeBottom.y) / 2;
+  const leftBrowY = leftBrow.y;
+  const rightBrowY = rightBrow.y;
+  // positive when brow is above eye center (remember: y increases downward in image coords)
+  const browEyeDist = ((leftEyeCenterY - leftBrowY) + (rightEyeCenterY - rightBrowY)) / 2;
   const browRatio = browEyeDist / interOcular;
 
   // mouth open
@@ -113,7 +119,8 @@ function extractFeatures(faceLandmarks, poseLandmarks) {
   const roll = Math.atan2(dy, dx) * 180 / Math.PI; // degrees
 
   // head nod detection (based on nose-chin vertical diff)
-  const nod = (noseTip.y - chin.y); // negative when chin below nose
+  // Use chin - nose so value is positive when chin drops (nodding down)
+  const nod = (chin.y - noseTip.y); // positive when chin below nose
 
   // torso lean (if pose available)
   let torsoLean = 0;
@@ -132,12 +139,11 @@ function extractFeatures(faceLandmarks, poseLandmarks) {
   const rightBrowDist = dist(rightBrow, rightEyeTop);
   const browAsymmetry = Math.abs(leftBrowDist - rightBrowDist) / interOcular;
   
-  // Cheek raise / smile detection
-  const leftCheek = faceLandmarks[266]; // approximate cheek point
-  const rightCheek = faceLandmarks[36];
+  // Smile detection: use mouth width (distance between corners) normalized by inter-ocular distance
   const mouthCornerLeft = faceLandmarks[61];
   const mouthCornerRight = faceLandmarks[291];
-  const smileMetric = ((dist(mouthCornerLeft, leftCheek) + dist(mouthCornerRight, rightCheek)) / 2) / interOcular;
+  const mouthWidth = dist(mouthCornerLeft, mouthCornerRight) / interOcular;
+  const smileMetric = mouthWidth;
   
   // Eye gaze direction (horizontal)
   const leftPupil = faceLandmarks[468]; // iris center (if refineLandmarks enabled)
@@ -196,10 +202,11 @@ function mapToText(f) {
   }
   if (detectionState.mouthOpen) texts.push("mouth open (maybe surprise/talking)");
 
-  // Eyebrows raised
-  if (!detectionState.browsRaised && f.browRatio > 0.06) {
+  // Eyebrows raised — use stricter vertical threshold to avoid constant firing
+  // These thresholds assume browRatio is measured in units of inter-ocular distance
+  if (!detectionState.browsRaised && f.browRatio > 0.12) {
     detectionState.browsRaised = true;
-  } else if (detectionState.browsRaised && f.browRatio < 0.05) {
+  } else if (detectionState.browsRaised && f.browRatio < 0.10) {
     detectionState.browsRaised = false;
   }
   if (detectionState.browsRaised) texts.push("eyebrows raised (surprise/ask)");
@@ -222,36 +229,36 @@ function mapToText(f) {
   }
   if (detectionState.headTiltLeft) texts.push("head tilted left");
 
-  // Head nod
-  if (!detectionState.headNod && f.nod < -0.02) {
+  // Head nod — detect when chin drops below nose (nod down). Using positive nod value.
+  if (!detectionState.headNod && f.nod > 0.02) {
     detectionState.headNod = true;
-  } else if (detectionState.headNod && f.nod > -0.01) {
+  } else if (detectionState.headNod && f.nod < 0.01) {
     detectionState.headNod = false;
   }
   if (detectionState.headNod) texts.push("head down / nod");
 
-  // Body lean
-  if (!detectionState.bodyLean && Math.abs(f.torsoLean) > 0.05) {
+  // Body lean — increase threshold to reduce false positives
+  if (!detectionState.bodyLean && Math.abs(f.torsoLean) > 0.08) {
     detectionState.bodyLean = true;
-  } else if (detectionState.bodyLean && Math.abs(f.torsoLean) < 0.03) {
+  } else if (detectionState.bodyLean && Math.abs(f.torsoLean) < 0.05) {
     detectionState.bodyLean = false;
   }
   if (detectionState.bodyLean) texts.push("body leaning");
 
   // PHASE C: New features
   
-  // Brow furrow (asymmetry / concern)
-  if (!detectionState.browFurrow && f.browAsymmetry > 0.03) {
+  // Brow furrow (asymmetry / concern) — use a larger threshold to avoid small offsets
+  if (!detectionState.browFurrow && f.browAsymmetry > 0.06) {
     detectionState.browFurrow = true;
-  } else if (detectionState.browFurrow && f.browAsymmetry < 0.02) {
+  } else if (detectionState.browFurrow && f.browAsymmetry < 0.04) {
     detectionState.browFurrow = false;
   }
   if (detectionState.browFurrow) texts.push("brow furrow (concern)");
 
-  // Smile
-  if (!detectionState.smiling && f.smileMetric > 0.12) {
+  // Smile — use mouth width metric (normalized). Increase threshold to avoid neutral mouth being detected.
+  if (!detectionState.smiling && f.smileMetric > 0.30) {
     detectionState.smiling = true;
-  } else if (detectionState.smiling && f.smileMetric < 0.10) {
+  } else if (detectionState.smiling && f.smileMetric < 0.28) {
     detectionState.smiling = false;
   }
   if (detectionState.smiling) texts.push("smiling");
@@ -524,9 +531,96 @@ function mapToTextWithUpdate(features) {
   return result;
 }
 
+// On-page overlay logger (helps when DevTools isn't available)
+function startOverlayLogger() {
+  if (window.__overlayLoggerId) return; // already running
+
+  // create overlay container
+  let overlay = document.getElementById('featureOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'featureOverlay';
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      right: '12px',
+      top: '80px',
+      zIndex: 99999,
+      width: '320px',
+      maxHeight: '60vh',
+      overflow: 'auto',
+      background: 'rgba(255,255,255,0.95)',
+      color: '#111',
+      border: '1px solid rgba(0,0,0,0.08)',
+      boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
+      padding: '10px',
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      lineHeight: '1.2',
+      borderRadius: '8px'
+    });
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    Object.assign(closeBtn.style, { position: 'absolute', right: '6px', top: '6px', border: 'none', background: 'transparent', fontSize: '16px', cursor: 'pointer' });
+    closeBtn.addEventListener('click', () => {
+      stopOverlayLogger();
+      overlay.remove();
+    });
+    overlay.appendChild(closeBtn);
+
+    const title = document.createElement('div');
+    title.textContent = 'Feature Logger';
+    Object.assign(title.style, { fontWeight: '600', marginBottom: '6px' });
+    overlay.appendChild(title);
+
+    const content = document.createElement('pre');
+    content.id = 'featureOverlayContent';
+    Object.assign(content.style, { whiteSpace: 'pre-wrap', margin: '0' });
+    overlay.appendChild(content);
+
+    document.body.appendChild(overlay);
+  }
+
+  function computeRawBrowRatio() {
+    try {
+      if (!window.lastFace) return null;
+      const lf = window.lastFace;
+      const leftEyeTop = lf[105], leftEyeBottom = lf[159], rightEyeTop = lf[386], rightEyeBottom = lf[145];
+      const leftBrow = lf[70], rightBrow = lf[300];
+      const leftEyeCenterY = (leftEyeTop.y + leftEyeBottom.y)/2;
+      const rightEyeCenterY = (rightEyeTop.y + rightEyeBottom.y)/2;
+      const browEyeDist = ((leftEyeCenterY - leftBrow.y) + (rightEyeCenterY - rightBrow.y)) / 2;
+      const interOcular = Math.hypot(lf[33].x - lf[263].x, lf[33].y - lf[263].y) + 1e-6;
+      return browEyeDist / interOcular;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  const contentEl = document.getElementById('featureOverlayContent');
+  window.__overlayLoggerId = setInterval(() => {
+    const f = (window.featureHistory && featureHistory.length) ? featureHistory[featureHistory.length-1] : null;
+    const rawBrow = computeRawBrowRatio();
+    const txt = [];
+    txt.push('time: ' + new Date().toLocaleTimeString());
+    txt.push('lastDetection: ' + (window.lastDetection || '')); 
+    txt.push('\nSmoothed features:');
+    txt.push(f ? JSON.stringify(f, null, 2) : '  (no features yet)');
+    txt.push('\nRaw browRatio: ' + (rawBrow !== null ? rawBrow.toFixed(4) : 'n/a'));
+    txt.push('\nTranscript (last 6):');
+    try { txt.push(JSON.stringify((window.transcript||[]).slice(-6), null, 2)); } catch(e){ txt.push('n/a'); }
+    contentEl.textContent = txt.join('\n');
+  }, 500);
+}
+
+function stopOverlayLogger(){
+  if (window.__overlayLoggerId) { clearInterval(window.__overlayLoggerId); delete window.__overlayLoggerId; }
+}
+
 // Initialize on load
 window.addEventListener('load', () => {
   console.log('Page loaded, UI functions initialized');
   updateTranscriptDisplay();
+  // start overlay logger automatically so user doesn't need DevTools
+  try { startOverlayLogger(); } catch (e) { console.warn('Overlay logger failed:', e); }
 });
 
